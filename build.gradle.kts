@@ -621,6 +621,18 @@ project(":exts:ext-git") {
         implementation(project(":core"))
         implementation(project(":exts:devins-lang"))
 
+        testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.10.1")
+        testImplementation(kotlin("test"))
+        testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0") {
+            excludeKotlinDeps()
+        }
+        implementation("com.squareup.okhttp3:okhttp:4.12.0") {
+            excludeKotlinDeps()
+        }
+        implementation("com.squareup.okhttp3:okhttp-sse:4.12.0") {
+            excludeKotlinDeps()
+        }
+
         // kanban
         implementation("org.kohsuke:github-api:1.326")
         implementation("org.gitlab4j:gitlab4j-api:5.8.0")
@@ -628,6 +640,9 @@ project(":exts:ext-git") {
         implementation("cc.unitmesh:git-commit-message:0.4.6") {
             excludeKotlinDeps()
         }
+        
+        // JSON library for JSONObject
+        implementation("org.json:json:20240303")
     }
 }
 

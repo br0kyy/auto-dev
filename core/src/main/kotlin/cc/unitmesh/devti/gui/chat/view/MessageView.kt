@@ -70,6 +70,9 @@ class MessageView(val project: Project, val message: String, val role: ChatRole,
 
             toolbarPanel.background = bg
             centerPanel.background = bg
+        } else {
+            // For Assistant messages, parse and display markdown content
+            updateContent(message)
         }
 
         centerPanel.add(myList, BorderLayout.CENTER)
@@ -145,8 +148,11 @@ class MessageView(val project: Project, val message: String, val role: ChatRole,
                             ?.create(project, codeFence.text)
                     }
 
-                    val isCanHtml = codeFence.language.displayName.lowercase() == "markdown"
-                    if (isCanHtml && codeFence.isComplete && blockViews[index] !is ExtensionLangSketch) {
+                    // Check for markdown content - either explicit markdown code blocks or markdown text
+                    val isMarkdownBlock = codeFence.language.displayName.lowercase() == "markdown"
+                    val isMarkdownOriginal = codeFence.originLanguage?.lowercase() == "markdown"
+                    
+                    if ((isMarkdownBlock || isMarkdownOriginal) && codeFence.isComplete && blockViews[index] !is ExtensionLangSketch) {
                         langSketch = MarkdownPreviewHighlightSketch(project, codeFence.text)
                     }
 
