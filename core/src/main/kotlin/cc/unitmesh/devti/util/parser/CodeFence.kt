@@ -116,11 +116,18 @@ class CodeFence(
             }
 
             return codeFences.filter {
+                // Keep DevIn blocks regardless of content
                 if (it.originLanguage == "DevIn") {
                     return@filter true
                 }
 
-                return@filter it.text.isNotEmpty()
+                // Keep code blocks (non-markdown) regardless of content
+                if (it.originLanguage != null && it.originLanguage != "markdown") {
+                    return@filter true
+                }
+
+                // For markdown blocks, only filter out if completely empty
+                return@filter it.text.trim().isNotEmpty()
             }
         }
 
@@ -164,12 +171,21 @@ class CodeFence(
                     val trimmedLine = line.trimStart()
                     val matchResult = languageRegex.find(trimmedLine)
                     if (matchResult != null) {
+                        // Add accumulated text as markdown block before starting code block
                         if (textBuilder.isNotEmpty()) {
-                            val textBlock = CodeFence(
-                                findLanguage("markdown"), textBuilder.trim().toString(), true, "md"
-                            )
-                            lastTxtBlock = textBlock
-                            codeFences.add(textBlock)
+                            val textContent = textBuilder.toString()
+                            // Remove trailing newline if present
+                            val cleanTextContent = if (textContent.endsWith("\n")) {
+                                textContent.dropLast(1)
+                            } else textContent
+                            
+                            if (cleanTextContent.trim().isNotEmpty()) {
+                                val textBlock = CodeFence(
+                                    findLanguage("markdown"), cleanTextContent.trim(), true, "md", "markdown"
+                                )
+                                lastTxtBlock = textBlock
+                                codeFences.add(textBlock)
+                            }
                             textBuilder.clear()
                         }
 
@@ -187,10 +203,15 @@ class CodeFence(
                     // Allow for some flexibility in indentation for the closing fence
                     // This helps with numbered lists where indentation might vary slightly
                     if (trimmedLine == "```") {
-                        val codeContent = codeBuilder.trim().toString()
+                        val codeContent = codeBuilder.toString()
+                        // Remove trailing newline if present
+                        val cleanCodeContent = if (codeContent.endsWith("\n")) {
+                            codeContent.dropLast(1)
+                        } else codeContent
+                        
                         val codeFence = CodeFence(
                             findLanguage(languageId ?: "markdown"),
-                            codeContent,
+                            cleanCodeContent,
                             true,
                             lookupFileExt(languageId ?: "md"),
                             languageId
@@ -207,15 +228,28 @@ class CodeFence(
                 }
             }
 
+            // Add remaining text content as markdown block
             if (textBuilder.isNotEmpty()) {
-                val textBlock = CodeFence(findLanguage("markdown"), textBuilder.trim().toString(), true, "md")
-                codeFences.add(textBlock)
+                val textContent = textBuilder.toString()
+                val cleanTextContent = if (textContent.endsWith("\n")) {
+                    textContent.dropLast(1)
+                } else textContent
+                
+                if (cleanTextContent.trim().isNotEmpty()) {
+                    val textBlock = CodeFence(findLanguage("markdown"), cleanTextContent.trim(), true, "md", "markdown")
+                    codeFences.add(textBlock)
+                }
             }
 
+            // Add remaining incomplete code block
             if (codeStarted && codeBuilder.isNotEmpty()) {
-                val code = codeBuilder.trim().toString()
+                val codeContent = codeBuilder.toString()
+                val cleanCodeContent = if (codeContent.endsWith("\n")) {
+                    codeContent.dropLast(1)
+                } else codeContent
+                
                 val codeFence = CodeFence(
-                    findLanguage(languageId ?: "markdown"), code, false, lookupFileExt(languageId ?: "md"), languageId
+                    findLanguage(languageId ?: "markdown"), cleanCodeContent, false, lookupFileExt(languageId ?: "md"), languageId
                 )
                 codeFences.add(codeFence)
             }

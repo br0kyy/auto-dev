@@ -32,6 +32,9 @@ class MarkdownPreviewHighlightSketch(val project: Project, val text: String) : E
                 parent?.dispatchEvent(e)
             }
         })
+        
+        // Initialize with converted HTML content immediately
+        text = convertMarkdownToHtml(this@MarkdownPreviewHighlightSketch.text)
     }
 
     val previewPanel = panel {
@@ -46,8 +49,13 @@ class MarkdownPreviewHighlightSketch(val project: Project, val text: String) : E
         editorPane.text = convertMarkdownToHtml(text)
         this.context = text
 
-        editorPane.invalidate()
+        // Ensure the editor pane properly updates its content
+        editorPane.revalidate()
         editorPane.repaint()
+        
+        // Force update of the parent container as well
+        previewPanel.revalidate()
+        previewPanel.repaint()
     }
 
     override fun getComponent(): JComponent {

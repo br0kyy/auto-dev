@@ -37,18 +37,8 @@ class MessageView(val project: Project, val message: String, val role: ChatRole,
     JBPanel<MessageView>() {
     private var myList = JPanel(VerticalLayout(JBUI.scale(0)))
     private val blockViews: MutableList<LangSketch> = mutableListOf()
-    private fun initializePreAllocatedBlocks(project: Project) {
-        repeat(32) {
-            runInEdt {
-                val codeBlockViewer = CodeHighlightSketch(project, "", PlainTextLanguage.INSTANCE)
-                blockViews.add(codeBlockViewer)
-                myList.add(codeBlockViewer)
-            }
-        }
-    }
 
     init {
-        initializePreAllocatedBlocks(project)
 
         isDoubleBuffered = true
         isOpaque = true
@@ -71,7 +61,7 @@ class MessageView(val project: Project, val message: String, val role: ChatRole,
             toolbarPanel.background = bg
             centerPanel.background = bg
         } else {
-            // For Assistant messages, parse and display markdown content
+            // For Assistant messages, parse and display markdown content immediately
             updateContent(message)
         }
 
@@ -124,15 +114,8 @@ class MessageView(val project: Project, val message: String, val role: ChatRole,
 
     fun onFinish(text: String) {
         displayText = text
-        runInEdt {
-            blockViews.filter { it.getViewText().isNotEmpty() }.forEach {
-                it.onDoneStream(text)
-            }
-
-            blockViews.filter { it.getViewText().isEmpty() }.forEach {
-                myList.remove(it.getComponent())
-            }
-        }
+        // 最终完成时，重新按顺序渲染所有内容，确保顺序正确
+        updateContent(text)
     }
 
     fun updateContent(text: String) {
@@ -140,50 +123,26 @@ class MessageView(val project: Project, val message: String, val role: ChatRole,
         val codeFenceList = CodeFence.parseAll(text)
 
         runInEdt {
-            codeFenceList.forEachIndexed { index, codeFence ->
-                if (index < blockViews.size) {
-                    var langSketch: ExtensionLangSketch? = null
-                    if (codeFence.originLanguage != null && codeFence.isComplete && blockViews[index] !is ExtensionLangSketch) {
-                        langSketch = LanguageSketchProvider.provide(codeFence.originLanguage)
-                            ?.create(project, codeFence.text)
-                    }
+            // 先清空所有 block 和 UI
+            blockViews.forEach { it.dispose() }
+            blockViews.clear()
+            myList.removeAll()
 
-                    // Check for markdown content - either explicit markdown code blocks or markdown text
-                    val isMarkdownBlock = codeFence.language.displayName.lowercase() == "markdown"
-                    val isMarkdownOriginal = codeFence.originLanguage?.lowercase() == "markdown"
-                    
-                    if ((isMarkdownBlock || isMarkdownOriginal) && codeFence.isComplete && blockViews[index] !is ExtensionLangSketch) {
-                        langSketch = MarkdownPreviewHighlightSketch(project, codeFence.text)
+            // 按顺序渲染每个 block
+            codeFenceList.forEach { codeFence ->
+                val component = if (codeFence.originLanguage?.lowercase() == "markdown" ||
+                    codeFence.language.displayName.lowercase() == "markdown") {
+                    val markdownSketch = MarkdownPreviewHighlightSketch(project, codeFence.text).also {
+                        it.updateViewText(codeFence.text, true)
                     }
-
-                    if (langSketch != null) {
-                        val oldComponent = blockViews[index]
-                        blockViews[index] = langSketch
-                        myList.remove(index)
-                        myList.add(langSketch.getComponent(), index)
-
-                        oldComponent.dispose()
-                    } else {
-                        blockViews[index].apply {
-                            updateLanguage(codeFence.language, codeFence.originLanguage)
-                            updateViewText(codeFence.text, codeFence.isComplete)
-                        }
-                    }
+                    blockViews.add(markdownSketch)
+                    markdownSketch.getComponent()
                 } else {
-                    val codeBlockViewer = CodeHighlightSketch(project, codeFence.text, PlainTextLanguage.INSTANCE)
+                    val codeBlockViewer = CodeHighlightSketch(project, codeFence.text, codeFence.language)
                     blockViews.add(codeBlockViewer)
-                    myList.add(codeBlockViewer.getComponent())
+                    codeBlockViewer.getComponent()
                 }
-            }
-
-            while (blockViews.size > codeFenceList.size) {
-                val lastIndex = blockViews.lastIndex
-                try {
-                    blockViews.removeAt(lastIndex)
-                    myList.remove(lastIndex)
-                } catch (e: Exception) {
-                    e.printStackTrace()
-                }
+                myList.add(component)
             }
 
             myList.revalidate()

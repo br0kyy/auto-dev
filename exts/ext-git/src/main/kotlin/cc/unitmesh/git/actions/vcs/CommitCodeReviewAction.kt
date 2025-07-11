@@ -344,7 +344,7 @@ class CommitCodeReviewAction : ChatBaseAction() {
 
             // 合并所有审查结果为一个markdown文档
             val combinedMarkdown = buildString {
-                append("# 📋 Code Review Report\n\n")
+                append("# 📋 代码审查报告\n\n")
                 
                 reviewResults.forEach { (fileName, reviewResult) ->
                     append("## 📄 File: $fileName\n\n")
