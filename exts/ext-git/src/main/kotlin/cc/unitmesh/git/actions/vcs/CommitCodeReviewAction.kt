@@ -3,14 +3,8 @@ package cc.unitmesh.git.actions.vcs
 import cc.unitmesh.devti.AutoDevNotifications
 import cc.unitmesh.devti.actions.chat.base.ChatBaseAction
 import cc.unitmesh.devti.gui.chat.message.ChatActionType
-import cc.unitmesh.devti.gui.sendToChatPanel
-import cc.unitmesh.devti.provider.context.ChatContextItem
-import cc.unitmesh.devti.provider.context.ChatContextProvider
-import cc.unitmesh.devti.provider.context.ChatCreationContext
-import cc.unitmesh.devti.provider.context.ChatOrigin
 import cc.unitmesh.devti.settings.locale.LanguageChangedCallback.presentationText
 import cc.unitmesh.devti.statusbar.AutoDevStatus
-import cc.unitmesh.devti.util.AutoDevCoroutineScope
 import cc.unitmesh.devti.vcs.VcsPrompting
 import cc.unitmesh.devti.vcs.VcsUtil
 import com.intellij.openapi.actionSystem.ActionUpdateThread
@@ -37,6 +31,12 @@ import java.util.concurrent.atomic.AtomicInteger
 
 import cc.unitmesh.devti.gui.sendToChatWindow
 import java.util.concurrent.Semaphore
+import java.time.LocalDateTime
+import java.time.format.DateTimeFormatter
+import com.intellij.openapi.wm.ToolWindowManager
+import cc.unitmesh.devti.gui.AutoDevToolWindowFactory.AutoDevToolUtil
+import com.intellij.openapi.application.runInEdt
+import cc.unitmesh.devti.gui.chat.NormalChatCodingPanel
 
 class CommitCodeReviewAction : ChatBaseAction() {
     private val logger = logger<CommitCodeReviewAction>()
@@ -105,7 +105,7 @@ class CommitCodeReviewAction : ChatBaseAction() {
         startCodeReview(project, changes)
     }
 
-    private suspend inline fun <T> Semaphore.withPermit(action: () -> T): T {
+    private inline fun <T> Semaphore.withPermit(action: () -> T): T {
         acquire()
         try {
             return action()
@@ -115,7 +115,7 @@ class CommitCodeReviewAction : ChatBaseAction() {
     }
 
     private fun startCodeReview(project: Project, changes: List<Change>) {
-        val task = object : Task.Backgroundable(project, "Code Review", true) {
+        val task = object : Task.Backgroundable(project, "Code review", true) {
             override fun run(indicator: ProgressIndicator) {
                 indicator.isIndeterminate = false
                 indicator.text = "Preparing code diff..."
@@ -337,33 +337,80 @@ class CommitCodeReviewAction : ChatBaseAction() {
     }
 
     private fun displayAllReviewsInChat(project: Project, reviewResults: List<Pair<String, String>>) {
-        sendToChatWindow(project, getActionType()) { panel, service ->
-            // 创建一个用户消息作为上下文
-            val userMessage = "Please review the code changes in ${reviewResults.size} file(s):"
-            panel.addMessage(userMessage, true, userMessage)
+        val toolWindowManager = ToolWindowManager.getInstance(project).getToolWindow(AutoDevToolUtil.ID) ?: run {
+            logger.warn("Tool window not found")
+            return
+        }
 
-            // 合并所有审查结果为一个markdown文档
-            val combinedMarkdown = buildString {
-                append("# 📋 代码审查报告\n\n")
+        runInEdt {
+            toolWindowManager.activate {
+                val contentManager = toolWindowManager.contentManager
                 
-                reviewResults.forEach { (fileName, reviewResult) ->
-                    append("## 📄 File: $fileName\n\n")
-                    append(reviewResult)
-                    append("\n\n---\n\n")
+                // 查找现有的聊天面板
+                var existingPanel: NormalChatCodingPanel? = null
+                for (content in contentManager.contents) {
+                    if (content.component is NormalChatCodingPanel) {
+                        existingPanel = content.component as NormalChatCodingPanel
+                        break
+                    }
                 }
                 
-                append("✅ Code review completed for ${reviewResults.size} file(s).\n")
-            }
+                if (existingPanel != null) {
+                    // 直接使用现有的聊天面板，追加消息
+                    val userMessage = "Please review the code changes in ${reviewResults.size} file(s):"
+                    existingPanel.addMessage(userMessage, true, userMessage)
 
-            // 创建Assistant消息并让MessageView自动处理markdown渲染
-            val assistantMessage = panel.addMessage(combinedMarkdown, false, combinedMarkdown)
-            
-            // 确保消息完成处理
-            ApplicationManager.getApplication().invokeLater {
-                assistantMessage.onFinish(combinedMarkdown)
-                panel.updateUI()
-                panel.revalidate()
-                panel.repaint()
+                    // 合并所有审查结果为一个markdown文档
+                    val combinedMarkdown = buildString {
+                        append("# 📋 代码审查报告 (${LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"))})\n\n")
+                        
+                        reviewResults.forEach { (fileName, reviewResult) ->
+                            append("## 📄 File: $fileName\n\n")
+                            append(reviewResult)
+                            append("\n\n---\n\n")
+                        }
+                        
+                        append("✅ Code review completed for ${reviewResults.size} file(s).\n")
+                    }
+
+                    // 添加Assistant消息
+                    val assistantMessage = existingPanel.addMessage(combinedMarkdown, false, combinedMarkdown)
+                    
+                    // 确保消息完成处理
+                    ApplicationManager.getApplication().invokeLater {
+                        assistantMessage.onFinish(combinedMarkdown)
+                        existingPanel.updateUI()
+                        existingPanel.revalidate()
+                        existingPanel.repaint()
+                    }
+                } else {
+                    // 如果没有现有面板，创建一个新的
+                    sendToChatWindow(project, getActionType()) { panel, service ->
+                        val userMessage = "Please review the code changes in ${reviewResults.size} file(s):"
+                        panel.addMessage(userMessage, true, userMessage)
+
+                        val combinedMarkdown = buildString {
+                            append("# 📋 代码审查报告 (${LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"))})\n\n")
+                            
+                            reviewResults.forEach { (fileName, reviewResult) ->
+                                append("## 📄 File: $fileName\n\n")
+                                append(reviewResult)
+                                append("\n\n---\n\n")
+                            }
+                            
+                            append("✅ Code review completed for ${reviewResults.size} file(s).\n")
+                        }
+
+                        val assistantMessage = panel.addMessage(combinedMarkdown, false, combinedMarkdown)
+                        
+                        ApplicationManager.getApplication().invokeLater {
+                            assistantMessage.onFinish(combinedMarkdown)
+                            panel.updateUI()
+                            panel.revalidate()
+                            panel.repaint()
+                        }
+                    }
+                }
             }
         }
     }
