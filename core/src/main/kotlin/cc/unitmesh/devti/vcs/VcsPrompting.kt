@@ -58,7 +58,7 @@ class VcsPrompting(private val project: Project) {
             // Skip files matching ignore patterns
             val filePath = change.afterRevision?.file ?: change.beforeRevision?.file
             if (filePath != null && ignoreFilePatterns.any { pattern ->
-                    pattern.matches(java.nio.file.Path.of(filePath.path))
+                    pattern.matches(java.nio.file.Paths.get(filePath.path))
                 }) {
                 continue
             }
@@ -145,35 +145,44 @@ class VcsPrompting(private val project: Project) {
     }
 
     /**
-     * Computes line-level diff between old and new content using a simplified diff algorithm.
+     * Computes line-level diff between old and new content using an improved diff algorithm.
+     * This algorithm uses LCS (Longest Common Subsequence) to better identify moved code blocks.
      */
     private fun computeLineDiff(oldLines: List<String>, newLines: List<String>): List<DiffOperation> {
+        // Use Myers' diff algorithm with LCS to identify common subsequences
+        val lcs = computeLCS(oldLines, newLines)
         val operations = mutableListOf<DiffOperation>()
+        
         var oldIndex = 0
         var newIndex = 0
-
-        while (oldIndex < oldLines.size || newIndex < newLines.size) {
+        var lcsIndex = 0
+        
+        while (oldIndex < oldLines.size || newIndex < newLines.size || lcsIndex < lcs.size) {
             when {
-                oldIndex >= oldLines.size -> {
-                    // Remaining lines are additions
-                    operations.add(DiffOperation(
-                        type = DiffOperation.Type.INSERT,
-                        line = newLines[newIndex],
-                        newLineNumber = newIndex + 1
-                    ))
-                    newIndex++
+                // We've processed all LCS matches
+                lcsIndex >= lcs.size -> {
+                    // Add remaining deletions
+                    while (oldIndex < oldLines.size) {
+                        operations.add(DiffOperation(
+                            type = DiffOperation.Type.DELETE,
+                            line = oldLines[oldIndex],
+                            oldLineNumber = oldIndex + 1
+                        ))
+                        oldIndex++
+                    }
+                    // Add remaining insertions
+                    while (newIndex < newLines.size) {
+                        operations.add(DiffOperation(
+                            type = DiffOperation.Type.INSERT,
+                            line = newLines[newIndex],
+                            newLineNumber = newIndex + 1
+                        ))
+                        newIndex++
+                    }
                 }
-                newIndex >= newLines.size -> {
-                    // Remaining lines are deletions
-                    operations.add(DiffOperation(
-                        type = DiffOperation.Type.DELETE,
-                        line = oldLines[oldIndex],
-                        oldLineNumber = oldIndex + 1
-                    ))
-                    oldIndex++
-                }
-                oldLines[oldIndex] == newLines[newIndex] -> {
-                    // Lines are identical
+                // Current lines match the next LCS element
+                oldIndex < oldLines.size && newIndex < newLines.size && 
+                lcs[lcsIndex].oldIndex == oldIndex && lcs[lcsIndex].newIndex == newIndex -> {
                     operations.add(DiffOperation(
                         type = DiffOperation.Type.EQUAL,
                         line = oldLines[oldIndex],
@@ -182,60 +191,88 @@ class VcsPrompting(private val project: Project) {
                     ))
                     oldIndex++
                     newIndex++
+                    lcsIndex++
                 }
+                // Need to advance to next LCS match
                 else -> {
-                    // Lines are different - look ahead to determine if it's modification or insert/delete
-                    val lookaheadMatch = findNextMatch(oldLines, newLines, oldIndex, newIndex)
-
-                    if (lookaheadMatch != null && lookaheadMatch.first - oldIndex == 1 && lookaheadMatch.second - newIndex == 1) {
-                        // Single line modification
-                        operations.add(DiffOperation(
-                            type = DiffOperation.Type.MODIFY,
-                            line = newLines[newIndex],
-                            oldLine = oldLines[oldIndex],
-                            oldLineNumber = oldIndex + 1,
-                            newLineNumber = newIndex + 1
-                        ))
-                        oldIndex++
-                        newIndex++
-                    } else {
-                        // Treat as delete + insert
+                    val nextLcs = if (lcsIndex < lcs.size) lcs[lcsIndex] else null
+                    
+                    // Add deletions until we reach the next LCS match
+                    while (oldIndex < oldLines.size && (nextLcs == null || oldIndex < nextLcs.oldIndex)) {
                         operations.add(DiffOperation(
                             type = DiffOperation.Type.DELETE,
                             line = oldLines[oldIndex],
                             oldLineNumber = oldIndex + 1
                         ))
+                        oldIndex++
+                    }
+                    
+                    // Add insertions until we reach the next LCS match
+                    while (newIndex < newLines.size && (nextLcs == null || newIndex < nextLcs.newIndex)) {
                         operations.add(DiffOperation(
                             type = DiffOperation.Type.INSERT,
                             line = newLines[newIndex],
                             newLineNumber = newIndex + 1
                         ))
-                        oldIndex++
                         newIndex++
                     }
                 }
             }
         }
-
+        
         return operations
     }
-
+    
     /**
-     * Finds the next matching line pair within a reasonable lookahead distance.
+     * Computes the Longest Common Subsequence (LCS) between two lists of strings.
+     * Returns a list of LCSElement representing the common elements and their positions.
      */
-    private fun findNextMatch(oldLines: List<String>, newLines: List<String>, oldStart: Int, newStart: Int): Pair<Int, Int>? {
-        val maxLookahead = 5 // Limit lookahead to prevent performance issues
-
-        for (oldOffset in 1..minOf(maxLookahead, oldLines.size - oldStart)) {
-            for (newOffset in 1..minOf(maxLookahead, newLines.size - newStart)) {
-                if (oldStart + oldOffset < oldLines.size && newStart + newOffset < newLines.size &&
-                    oldLines[oldStart + oldOffset] == newLines[newStart + newOffset]) {
-                    return Pair(oldStart + oldOffset, newStart + newOffset)
+    private fun computeLCS(oldLines: List<String>, newLines: List<String>): List<LCSElement> {
+        val oldSize = oldLines.size
+        val newSize = newLines.size
+        
+        // Create LCS table
+        val lcsTable = Array(oldSize + 1) { IntArray(newSize + 1) }
+        
+        // Fill LCS table
+        for (i in 1..oldSize) {
+            for (j in 1..newSize) {
+                if (oldLines[i - 1] == newLines[j - 1]) {
+                    lcsTable[i][j] = lcsTable[i - 1][j - 1] + 1
+                } else {
+                    lcsTable[i][j] = maxOf(lcsTable[i - 1][j], lcsTable[i][j - 1])
                 }
             }
         }
-        return null
+        
+        // Backtrack to find LCS elements
+        val lcsElements = mutableListOf<LCSElement>()
+        var i = oldSize
+        var j = newSize
+        
+        while (i > 0 && j > 0) {
+            if (oldLines[i - 1] == newLines[j - 1]) {
+                lcsElements.add(0, LCSElement(i - 1, j - 1, oldLines[i - 1]))
+                i--
+                j--
+            } else if (lcsTable[i - 1][j] > lcsTable[i][j - 1]) {
+                i--
+            } else {
+                j--
+            }
+        }
+        
+        return lcsElements
     }
+    
+    /**
+     * Represents an element in the Longest Common Subsequence.
+     */
+    private data class LCSElement(
+        val oldIndex: Int,
+        val newIndex: Int,
+        val line: String
+    )
 
     private fun isBinaryOrTooLarge(change: Change): Boolean {
         return isBinaryOrTooLarge(change.beforeRevision) || isBinaryOrTooLarge(change.afterRevision)
